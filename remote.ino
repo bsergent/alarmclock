@@ -53,26 +53,27 @@ const int MAP_DIGIT[10] = {
 	B10111110, // 6
 	B11100000, // 7
 	B11111110, // 8
-	B11100110  // 9
+	B11110110  // 9
 };
 const int VOL_MIN = 1.2;
-const int DISPLAY_FREQ = 10; // Hz
+const int DISPLAY_FREQ = 1024; // Hz
 const int DISPLAY_SETTLE_STATES = 1;
+const int DISPLAY_FREQ_INPUT = 2; // Hz
 
 // State
 time_t clock_offset = 0;
+int clock_digits[5] = { 0, 0, 0, 0, 0 };
 time_t alarm_offset = 0;
+int alarm_digits[5] = { 0, 0, 0, 0, 0 };
 bool alarm_enabled = false;
 bool alarm_editing = false;
 long alarm_start = -1;
-int input_digits[4] = { 0, 0, 0, 0 };
+int input_digits[5] = { 0, 0, 0, 0, 0 };
 int input_digits_index = 0;
-bool input_pm = false;
+int display_digit_index = 0;
+long display_last_switch = 0;
 IRrecv irrecv(PIN_IR_RECEIVER);
 decode_results results_ir;
-int display_digit_index = 0;
-int display_digits[4] = { 0, 0, 0, 0 };
-long display_last_switch = 0;
 
 void setup() {
 	// Initialize seven-segment display pins
@@ -107,20 +108,21 @@ void loop() {
 	// Handle alarm sounding
 	// TODO Handle blinking and solid status LED
 	checkAlarm();
-	if (alarm_enabled && alarm_start >= 0 && now() / 60 == alarm_start / 60) {
+	bool alarm_sounding = alarm_enabled && alarm_start >= 0;
+	if (alarm_sounding && now() / 60 == alarm_start / 60) {
 		// TODO Actually control melody here
-		digitalWrite(PIN_STATUS, HIGH);
-	} else digitalWrite(PIN_STATUS, LOW);
+		digitalWrite(PIN_PIEZO, HIGH);
+	} else digitalWrite(PIN_PIEZO, LOW);
 
 	// Show math problems if alarm sounding
 
 	// Pulse seven-segment
 	updateDisplayDigits();
 	if (DEBUG && millis() % 5000 < 1)
-		printTime(display_digits);
+		printTime(clock_digits);
 	int selected_digit = display_digit_index / (DISPLAY_SETTLE_STATES + 1);
-	int* digits_to_display = input_digits_index > 0 ? input_digits : display_digits;
-	if (display_digit_index % (DISPLAY_SETTLE_STATES + 1) == 0 && !(input_digits_index > 0 && millis() % 500 >= 250)) {
+	int* digits_to_display = input_digits_index > 0 ? input_digits : alarm_editing ? alarm_digits : clock_digits;
+	if (display_digit_index % (DISPLAY_SETTLE_STATES + 1) == 0 && !(input_digits_index > 0 && isFreqOn(DISPLAY_FREQ_INPUT))) {
 		// Set the cathodes and annodes to display the current digit
 		for (int d = 0; d < 4; d++)
 			digitalWrite(PIN_DIGIT[d], selected_digit == d ? HIGH : LOW);
@@ -128,22 +130,39 @@ void loop() {
 			digitalWrite(PIN_SEGMENT[s], bitRead(MAP_DIGIT[digits_to_display[selected_digit]], 7 - s) ? LOW : HIGH);
 		
 		// Tick second indicator
-		if (selected_digit == 1 && getDisplaySecond())
+		if (selected_digit == 1 && getDisplaySecond() && !alarm_editing)
 			digitalWrite(PIN_SEGMENT[7], LOW);
 	
-		// TODO Handle AM/PM
-		if (selected_digit == 3 && getDisplayPM())
-			digitalWrite(PIN_SEGMENT[7], )
+		// Handle AM/PM
+		if (selected_digit == 3 && digits_to_display[4])
+			digitalWrite(PIN_SEGMENT[7], LOW);
+
 	} else {
 		// Blanking time b/w digits to let LEDs settle
 		for (int s = 0; s < 8; s++)
-			digitalWrite(PIN_SEGMENT[s], LOW);
+			digitalWrite(PIN_SEGMENT[s], HIGH);
 	}
 
-	if (millis() - display_last_switch > (1 / DISPLAY_FREQ) * 1000) {
+	if (millis() - display_last_switch > (1.0f / DISPLAY_FREQ) * 1000) {
 		display_digit_index = (display_digit_index + 1) % ((DISPLAY_SETTLE_STATES + 1) * 4);
 		display_last_switch = millis();
 	}
+
+	// Status LED
+	if (alarm_sounding || alarm_editing) {
+		if (isFreqOn(DISPLAY_FREQ_INPUT))
+			digitalWrite(PIN_STATUS, HIGH);
+		else
+			digitalWrite(PIN_STATUS, LOW);
+	} else if (alarm_enabled) {
+		digitalWrite(PIN_STATUS, HIGH);
+	} else {
+		digitalWrite(PIN_STATUS, LOW);
+	}
+}
+
+bool isFreqOn(int freq) {
+	return millis() % (int)(1.0f / freq * 1000) >= (1.0f / freq / 2 * 1000);
 }
 
 // Decode the modulated IR codes
@@ -190,11 +209,20 @@ void processRemote(int code) {
 			alarm_enabled = !alarm_enabled;
 			if (alarm_enabled)
 				Serial.println("Enabled alarm.");
-			else
+			else {
+				alarm_start = -1;
 				Serial.println("Disabled alarm.");
+			}
 			break;
 		case 0xFFB04F: // 200+
-			input_pm = !input_pm;
+			if (input_digits_index > 0) {
+				if (input_digits[4]) input_digits[4] = 0;
+				else input_digits[4] = 1;
+			} else if (alarm_editing) {
+				if (alarm_digits[4]) alarm_digits[4] = 0;
+				else alarm_digits[4] = 1;
+				alarm_enabled = true;
+			} else setTime(now() + 43200);
 			Serial.println("AM/PM toggled.");
 			break;
 		case 0xFFA25D: // CH-
@@ -202,6 +230,11 @@ void processRemote(int code) {
 			Serial.println(millis());
 			Serial.print("now() = ");
 			Serial.println(now());
+			break;
+		case 0xFF629D: // CH
+			Serial.println("Sounding alarm.");
+			alarm_offset = now();
+			alarm_enabled = true;
 			break;
 		case 0xFFFFFFFF:
 			break;
@@ -225,6 +258,8 @@ void processDigitPress(int digit) {
 			alarm_offset = convertDigitsToTimeOffset(input_digits);
 			alarm_editing = false;
 			alarm_enabled = true;
+			for (int d = 0; d < 5; d++)
+				alarm_digits[d] = input_digits[d];
 		}
 		if (DEBUG) {
 			Serial.print("Clock: ");
@@ -232,7 +267,7 @@ void processDigitPress(int digit) {
 			Serial.print("Alarm: ");
 			Serial.println(alarm_offset);
 			updateDisplayDigits();
-			printTime(display_digits);
+			printTime(clock_digits);
 		}
 		// Clear inputs
 		for (int d = 0; d < 4; d++)
@@ -249,11 +284,11 @@ void printTime(int* digits) {
 	Serial.print(":");
 	Serial.print(digits[2]);
 	Serial.print(digits[3]);
-	Serial.println(input_pm ? " p.m." : " a.m.");
+	Serial.println(digits[4] ? " p.m." : " a.m.");
 }
 
 // Convert inputted digits into seconds
-long convertDigitsToTimeOffset(int digits[4]) {
+long convertDigitsToTimeOffset(int digits[5]) {
 	long offset_minutes = 0;
 
 	// Hours
@@ -263,7 +298,7 @@ long convertDigitsToTimeOffset(int digits[4]) {
 	offset_minutes += digits[2] * 10;
 	offset_minutes += digits[3];
 	// AM/PM
-	if (input_pm)
+	if (digits[4])
 		offset_minutes += 12 * 60;
 	
 	if (DEBUG) {
@@ -273,7 +308,7 @@ long convertDigitsToTimeOffset(int digits[4]) {
 		Serial.print(":");
 		Serial.print(digits[2]);
 		Serial.print(digits[3]);
-		Serial.print(input_pm ? " p.m." : " a.m.");
+		Serial.print(digits[4] ? " p.m." : " a.m.");
 		Serial.print(" to ");
 		Serial.print(offset_minutes);
 		Serial.print(" min or ");
@@ -285,19 +320,13 @@ long convertDigitsToTimeOffset(int digits[4]) {
 
 // Returns digits for display on the seven-segment display
 void updateDisplayDigits() {
-	unsigned int hours = hour();
+	unsigned int hours = hourFormat12();
 	unsigned int minutes = minute();
-	if (hours >= 12) hours -= 12;
-	if (hours == 0) hours = 12;
-	display_digits[0] = hours / 10;
-	display_digits[1] = hours % 10;
-	display_digits[2] = minutes / 10;
-	display_digits[3] = minutes % 10;
-}
-
-// Returns true if PM (at or after noon)
-bool getDisplayPM() {
-	return hour() >= 12;
+	clock_digits[0] = hours / 10;
+	clock_digits[1] = hours % 10;
+	clock_digits[2] = minutes / 10;
+	clock_digits[3] = minutes % 10;
+	clock_digits[4] = isPM();
 }
 
 // Returns true every other second
@@ -307,9 +336,9 @@ bool getDisplaySecond() {
 
 // Checks if current time is within one minute period of the alarm
 void checkAlarm() {
-	int time_of_day = (millis() + clock_offset) % (24 * 60 * 60 * 1000);
-	if (time_of_day / 1000 / 60 == alarm_offset)
-		alarm_start = millis();
+	int time_of_day = now() % (24 * 60 * 60);
+	if (time_of_day / 60 == alarm_offset)
+		alarm_start = now();
 	else
 		alarm_start = -1;
 }
