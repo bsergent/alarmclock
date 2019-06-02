@@ -38,12 +38,11 @@ const int PIN_DIGIT[4] = {
 	12  // Right
 };
 const int PIN_STATUS = 13;
-const int PIN_PIEZO = A0; 
-const int PIN_PIEZO_REF = A1;
+const int PIN_PIEZO = A0;
 const int PIN_IR_RECEIVER = A3;
 
 // Other constants
-const int MAP_DIGIT[10] = {
+const int MAP_DIGIT[12] = {
 	B11111100, // 0
 	B01100000, // 1
 	B11011010, // 2
@@ -53,9 +52,10 @@ const int MAP_DIGIT[10] = {
 	B10111110, // 6
 	B11100000, // 7
 	B11111110, // 8
-	B11110110  // 9
+	B11110110, // 9
+	B01001010, // /
+	B01101110  // *
 };
-const int VOL_MIN = 1.2;
 const int DISPLAY_FREQ = 1024; // Hz
 const int DISPLAY_SETTLE_STATES = 1;
 const int DISPLAY_FREQ_INPUT = 2; // Hz
@@ -67,13 +67,28 @@ time_t alarm_offset = 0;
 int alarm_digits[5] = { 0, 0, 0, 0, 0 };
 bool alarm_enabled = false;
 bool alarm_editing = false;
-long alarm_start = -1;
+bool alarm_sounding = false;
 int input_digits[5] = { 0, 0, 0, 0, 0 };
 int input_digits_index = 0;
 int display_digit_index = 0;
 long display_last_switch = 0;
 IRrecv irrecv(PIN_IR_RECEIVER);
 decode_results results_ir;
+
+// Melodies
+struct Note {
+	unsigned int frequency;
+	unsigned long duration;
+};
+// Note alarm_melody[1] = {
+// 	{
+// 		frequency: 220,
+// 		duration: 1000
+// 	}, {
+// 		frequency: 240,
+// 		duration: 1000
+// 	}
+// }
 
 void setup() {
 	// Initialize seven-segment display pins
@@ -84,7 +99,6 @@ void setup() {
 	
 	// Initialize piezo pins
 	pinMode(PIN_PIEZO, OUTPUT);
-	pinMode(PIN_PIEZO_REF, OUTPUT);
 
 	// Initialize other pins
 	pinMode(PIN_STATUS, OUTPUT);
@@ -106,20 +120,18 @@ void loop() {
 	}
 
 	// Handle alarm sounding
-	// TODO Handle blinking and solid status LED
-	checkAlarm();
-	bool alarm_sounding = alarm_enabled && alarm_start >= 0;
-	if (alarm_sounding && now() / 60 == alarm_start / 60) {
+	updateAlarm();
+	if (alarm_sounding) {
 		// TODO Actually control melody here
-		digitalWrite(PIN_PIEZO, HIGH);
-	} else digitalWrite(PIN_PIEZO, LOW);
+		tone(PIN_PIEZO, 440);
+	} else noTone(PIN_PIEZO);
 
 	// Show math problems if alarm sounding
 
 	// Pulse seven-segment
 	updateDisplayDigits();
 	if (DEBUG && millis() % 5000 < 1)
-		printTime(clock_digits);
+		printDigits(clock_digits);
 	int selected_digit = display_digit_index / (DISPLAY_SETTLE_STATES + 1);
 	int* digits_to_display = input_digits_index > 0 ? input_digits : alarm_editing ? alarm_digits : clock_digits;
 	if (display_digit_index % (DISPLAY_SETTLE_STATES + 1) == 0 && !(input_digits_index > 0 && isFreqOn(DISPLAY_FREQ_INPUT))) {
@@ -209,10 +221,8 @@ void processRemote(int code) {
 			alarm_enabled = !alarm_enabled;
 			if (alarm_enabled)
 				Serial.println("Enabled alarm.");
-			else {
-				alarm_start = -1;
+			else
 				Serial.println("Disabled alarm.");
-			}
 			break;
 		case 0xFFB04F: // 200+
 			if (input_digits_index > 0) {
@@ -247,7 +257,7 @@ void processRemote(int code) {
 void processDigitPress(int digit) {
 	// Save inputted digit
 	input_digits[input_digits_index++] = digit;
-	printTime(input_digits);
+	printDigits(input_digits);
 
 	// Entered a full set of four digits
 	if (input_digits_index == 4) {
@@ -267,7 +277,7 @@ void processDigitPress(int digit) {
 			Serial.print("Alarm: ");
 			Serial.println(alarm_offset);
 			updateDisplayDigits();
-			printTime(clock_digits);
+			printDigits(clock_digits);
 		}
 		// Clear inputs
 		for (int d = 0; d < 4; d++)
@@ -277,7 +287,7 @@ void processDigitPress(int digit) {
 	}
 }
 
-void printTime(int* digits) {
+void printDigits(int* digits) {
 	if (!DEBUG) return;
 	Serial.print(digits[0]);
 	Serial.print(digits[1]);
@@ -335,10 +345,8 @@ bool getDisplaySecond() {
 }
 
 // Checks if current time is within one minute period of the alarm
-void checkAlarm() {
-	int time_of_day = now() % (24 * 60 * 60);
-	if (time_of_day / 60 == alarm_offset)
-		alarm_start = now();
-	else
-		alarm_start = -1;
+void updateAlarm() {
+	alarm_sounding = alarm_enabled
+		&& hour() == alarm_offset / 3600
+		&& minute() == (alarm_offset % 3600) / 60;
 }
