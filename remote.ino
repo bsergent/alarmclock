@@ -75,20 +75,61 @@ long display_last_switch = 0;
 IRrecv irrecv(PIN_IR_RECEIVER);
 decode_results results_ir;
 
-// Melodies
-struct Note {
-	unsigned int frequency;
-	unsigned long duration;
+// Melody
+const unsigned int _B5 = 988;
+const unsigned int _A5 = 880;
+const unsigned int _E5 = 659;
+const unsigned int _C5 = 523;
+
+const unsigned int _B4 = 494;
+const unsigned int _Bb4= 466;
+const unsigned int _A4 = 440;
+const unsigned int _G4 = 392;
+const unsigned int _F4 = 349;
+const unsigned int _E4 = 329;
+const unsigned int _D4 = 293;
+const unsigned int _C4 = 261;
+
+const unsigned int _B3 = 246;
+const unsigned int _A3 = 220;
+const unsigned int _G3 = 196;
+const unsigned int _F3 = 174;
+const unsigned int _E3 = 165;
+const unsigned int _D3 = 147;
+
+unsigned int melody_freqs[92] = {
+	_G4, _G4, _G4, _G4, _A4, _A4, _G4, _E4, _C4, // 9
+	_C4, _C4, _C4, _D4, _C4, _D4, _E4, // 7
+	_G4, _G4, _G4, _G4, _A4, _A4, _G4, _E4, _C4, // 9
+	_C4, _C4, _E4, _E4, _E4, _D4, _C4, // 7
+
+	_G4, _G4, _G4, _G4, _A4, _A4, _G4, _E4, _C4, // 9
+	_C4, _C4, _D4, _C4, _D4, _E4, // 6
+	_G4, _G4, _G4, _G4, _G4, _A4, _A4, _G4, _E4, _C4, // 10
+	_C4, _C4, _D4, _E4, _D4, _C4, // 6
+
+	_A4, _A4, _A4, _A4, _G4, _G4, _G4, _Bb4, _Bb4, _Bb4, _G4, _A4, // 12
+	_A4, _A4, _G4, _E4, _C4, _C4, _C4, _C4, _D4, _D4, _E4, // 11
+	_C4, _C4, _C4, _D4, _D4, _C4 // 6
 };
-// Note alarm_melody[1] = {
-// 	{
-// 		frequency: 220,
-// 		duration: 1000
-// 	}, {
-// 		frequency: 240,
-// 		duration: 1000
-// 	}
-// }
+unsigned int melody_durs[92]  = {
+	250, 250, 250, 250, 250, 250, 125, 125, 250,
+	250, 125, 125, 125, 125, 250, 999,
+	250, 250, 250, 250, 250, 250, 125, 125, 250,
+	250, 250, 125, 125, 125, 125, 999,
+
+	250, 250, 250, 250, 250, 250, 125, 125, 250,
+	250, 250, 125, 125, 250, 999,
+	250, 125, 125, 250, 250, 250, 250, 125, 125, 250,
+	250, 250, 125, 125, 250, 999,
+
+	125, 125, 500, 250, 250, 250, 500, 250, 250, 375, 125, 999,
+	500, 500, 125, 125, 750, 125, 125, 250, 250, 250, 999,
+	125, 125, 250, 250, 250, 999
+};
+unsigned int melody_length = 92;
+int melody_index = 0;
+time_t melody_last_note_start = 0;
 
 void setup() {
 	// Initialize seven-segment display pins
@@ -122,9 +163,18 @@ void loop() {
 	// Handle alarm sounding
 	updateAlarm();
 	if (alarm_sounding) {
-		// TODO Actually control melody here
-		tone(PIN_PIEZO, 440);
-	} else noTone(PIN_PIEZO);
+		// Start next note if necessary
+		if (melody_index == -1 || melody_durs[melody_index] <= millis() - melody_last_note_start) {
+			melody_index = (melody_index + 1) % melody_length;
+			melody_last_note_start = millis();
+			noTone(PIN_PIEZO);
+			delay(melody_index == 0 ? 1000 : 25);
+			tone(PIN_PIEZO, melody_freqs[melody_index]);
+		}
+	} else {
+		noTone(PIN_PIEZO);
+		melody_index == -1;
+	}
 
 	// Show math problems if alarm sounding
 
@@ -346,7 +396,10 @@ bool getDisplaySecond() {
 
 // Checks if current time is within one minute period of the alarm
 void updateAlarm() {
+	bool prev = alarm_sounding;
 	alarm_sounding = alarm_enabled
 		&& hour() == alarm_offset / 3600
 		&& minute() == (alarm_offset % 3600) / 60;
+	if (!prev && alarm_sounding)
+		melody_index = -1;
 }
