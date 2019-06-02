@@ -40,6 +40,7 @@ const int PIN_DIGIT[4] = {
 const int PIN_STATUS = 13;
 const int PIN_PIEZO = A0;
 const int PIN_IR_RECEIVER = A3;
+const int PIN_SEED = A4;
 
 // Other constants
 const int MAP_DIGIT[12] = {
@@ -146,12 +147,14 @@ void setup() {
 	// Initialize other pins
 	pinMode(PIN_STATUS, OUTPUT);
 	pinMode(PIN_IR_RECEIVER, OUTPUT);
+	pinMode(PIN_SEED, INPUT);
 
 	if (DEBUG)
 		Serial.begin(9600);
 
 	irrecv.enableIRIn();
 	setTime(0);
+	randomSeed(analogRead(PIN_SEED));
 }
 
 void loop() {
@@ -269,11 +272,16 @@ void processRemote(int code) {
 			processDigitPress(9);
 			break;
 		case 0xFF906F: // EQ
-			alarm_editing = !alarm_editing;
 			if (alarm_editing)
-				Serial.println("Editing alarm.");
-			else
-				Serial.println("Stopped editing alarm.");
+				alarm_editing = false;
+			else {
+				if (alarm_sounding)
+					Serial.println("Cannot edit alarm while sounding.");
+				else {
+					alarm_editing = true;
+					Serial.println("Editing alarm.");
+				}
+			}
 			break;
 		case 0xFFC23D: // Resume/Pause
 			if (alarm_enabled) {
@@ -295,6 +303,7 @@ void processRemote(int code) {
 			} else if (alarm_editing) {
 				if (alarm_digits[4]) alarm_digits[4] = 0;
 				else alarm_digits[4] = 1;
+				alarm_offset += 43200;
 				alarm_enabled = true;
 			} else setTime(now() + 43200);
 			Serial.println("AM/PM toggled.");
@@ -432,15 +441,18 @@ void updateAlarm() {
 		melody_index = -1;
 
 		// Set up game for solving
-		int x, y, func;
-		while (true) {
+		int x = random(10, 100);
+		int y = random(2, 10);
+		int func = random(10, 12);
+		while (func == 10 && x % y != 0) {
 			x = random(10, 100);
 			y = random(2, 10);
-			func = random(10, 12);
-			if (func == 11) break;
-			if (func == 10 && x % y == 0) break;
 		}
 		game_answer = func == 10 ? x / y : x * y;
+		if (DEBUG) {
+			Serial.print("game_answer = ");
+			Serial.println(game_answer);
+		}
 		game_digits[0] = x / 10;
 		game_digits[1] = x % 10;
 		game_digits[2] = func;
