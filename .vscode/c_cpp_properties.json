@@ -1,0 +1,20 @@
+{
+	"configurations": [
+		{
+			"name": "Win32",
+			"includePath": [
+				"C:\\\\Program Files (x86)\\\\Arduino\\\\hardware\\\\arduino\\\\avr\\\\**",
+				"C:\\\\Program Files (x86)\\\\Arduino\\\\hardware\\\\tools\\\\**",
+				"C:\\\\Users\\\\bserg_000\\\\Documents\\\\Arduino\\\\libraries\\\\**"
+			],
+			"forcedInclude": [
+				"C:\\\\Program Files (x86)\\\\Arduino\\\\hardware\\\\arduino\\\\avr\\\\cores\\\\arduino\\\\Arduino.h"
+			],
+			"intelliSenseMode": "gcc-x64",
+			"compilerPath": "C:/TDM-GCC-64/bin/g++.exe",
+			"cStandard": "c11",
+			"cppStandard": "c++17"
+		}
+	],
+	"version": 4
+}
