@@ -65,6 +65,8 @@ time_t clock_offset = 0;
 int clock_digits[5] = { 0, 0, 0, 0, 0 };
 time_t alarm_offset = 0;
 int alarm_digits[5] = { 0, 0, 0, 0, 0 };
+int game_digits[5] { 0, 10, 0, 0, 0 };
+int game_answer = 0;
 bool alarm_enabled = false;
 bool alarm_editing = false;
 bool alarm_sounding = false;
@@ -176,14 +178,20 @@ void loop() {
 		melody_index == -1;
 	}
 
-	// Show math problems if alarm sounding
-
 	// Pulse seven-segment
 	updateDisplayDigits();
-	if (DEBUG && millis() % 5000 < 1)
+	if (DEBUG && millis() % 5000 < 1 && false)
 		printDigits(clock_digits);
 	int selected_digit = display_digit_index / (DISPLAY_SETTLE_STATES + 1);
-	int* digits_to_display = input_digits_index > 0 ? input_digits : alarm_editing ? alarm_digits : clock_digits;
+	int* digits_to_display;
+	if (input_digits_index > 0)
+		digits_to_display = input_digits;
+	else if (alarm_editing)
+		digits_to_display = alarm_digits;
+	else if (alarm_sounding)
+		digits_to_display = game_digits;
+	else
+		digits_to_display = clock_digits;
 	if (display_digit_index % (DISPLAY_SETTLE_STATES + 1) == 0 && !(input_digits_index > 0 && isFreqOn(DISPLAY_FREQ_INPUT))) {
 		// Set the cathodes and annodes to display the current digit
 		for (int d = 0; d < 4; d++)
@@ -268,11 +276,17 @@ void processRemote(int code) {
 				Serial.println("Stopped editing alarm.");
 			break;
 		case 0xFFC23D: // Resume/Pause
-			alarm_enabled = !alarm_enabled;
-			if (alarm_enabled)
+			if (alarm_enabled) {
+				if (alarm_sounding)
+					Serial.println("Cannot disable alarm while sounding.");
+				else {
+					alarm_enabled = false;
+					Serial.println("Disabled alarm.");
+				}
+			} else {
+				alarm_enabled = true;
 				Serial.println("Enabled alarm.");
-			else
-				Serial.println("Disabled alarm.");
+			}
 			break;
 		case 0xFFB04F: // 200+
 			if (input_digits_index > 0) {
@@ -312,15 +326,19 @@ void processDigitPress(int digit) {
 	// Entered a full set of four digits
 	if (input_digits_index == 4) {
 		// Set current time or alarm
-		if (!alarm_editing)
-			setTime(convertDigitsToTimeOffset(input_digits));
-		else {
+		if (alarm_editing) {
 			alarm_offset = convertDigitsToTimeOffset(input_digits);
 			alarm_editing = false;
 			alarm_enabled = true;
 			for (int d = 0; d < 5; d++)
 				alarm_digits[d] = input_digits[d];
-		}
+		} else if (alarm_sounding) {
+			int ans = convertDigitsToNumber(input_digits);
+			if (ans == game_answer)
+				alarm_enabled = false;
+			else
+				Serial.println("Wrong answer.");
+		} else setTime(convertDigitsToTimeOffset(input_digits));
 		if (DEBUG) {
 			Serial.print("Clock: ");
 			Serial.println(now());
@@ -378,6 +396,16 @@ long convertDigitsToTimeOffset(int digits[5]) {
 	return offset_minutes * 60; // Convert to seconds
 }
 
+// Convert inputted digits to decimal number
+int convertDigitsToNumber(int digits[5]) {
+	int num = 0;
+	num += digits[0] * 1000;
+	num += digits[1] * 100;
+	num += digits[2] * 10;
+	num += digits[3] * 1;
+	return num;
+}
+
 // Returns digits for display on the seven-segment display
 void updateDisplayDigits() {
 	unsigned int hours = hourFormat12();
@@ -400,6 +428,22 @@ void updateAlarm() {
 	alarm_sounding = alarm_enabled
 		&& hour() == alarm_offset / 3600
 		&& minute() == (alarm_offset % 3600) / 60;
-	if (!prev && alarm_sounding)
+	if (!prev && alarm_sounding) {
 		melody_index = -1;
+
+		// Set up game for solving
+		int x, y, func;
+		while (true) {
+			x = random(10, 100);
+			y = random(2, 10);
+			func = random(10, 12);
+			if (func == 11) break;
+			if (func == 10 && x % y == 0) break;
+		}
+		game_answer = func == 10 ? x / y : x * y;
+		game_digits[0] = x / 10;
+		game_digits[1] = x % 10;
+		game_digits[2] = func;
+		game_digits[3] = y;
+	}
 }
